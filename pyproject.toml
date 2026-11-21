@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gujian-data"
+version = "0.1.0"
+description = "A 股实时行情多源容错 + 通达信本地日线解析（从股鉴项目抽取）"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = ["numpy>=1.24"]
+authors = [{ name = "aileishao.com" }]
+
+[project.urls]
+Homepage = "https://aileishao.com"
+Source = "https://github.com/leidi228611/gujian-data"
+
+[tool.setuptools.packages.find]
+include = ["gujian_data*"]
