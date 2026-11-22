@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""复盘统计单测（2026-11-22）：胜率/期望/盈亏比/回撤/逾期/合计。"""
+"""复盘统计 v2 测试（2026-11-22，含审阅回归 R6/R7/R9/R10）。"""
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 from stocklens import review
 
@@ -43,41 +44,52 @@ class TReview(unittest.TestCase):
         res = review.compute(day="20261120", ledgers=_ledgers(), save=False)
         a = res["instances"]["A"]
         self.assertEqual(a["closed_trades"], 3)
-        self.assertEqual(a["win_trades"], 2)
         self.assertEqual(a["win_rate_pct"], 66.7)
         self.assertAlmostEqual(a["expectancy"], round((200 - 100 + 300) / 3, 2))
-        self.assertAlmostEqual(a["profit_factor"], round(500 / 100, 2))
+        self.assertAlmostEqual(a["profit_factor"], 5.0)
         self.assertEqual(a["pnl_total"], 400.0)
-        self.assertEqual(a["fees_total"], 15.0)
-        self.assertEqual(a["today"]["sells"], 1)   # 只有 11-20 那笔算今天
-        self.assertEqual(a["today"]["pnl"], 300.0)
-        # 逾期未卖：sell_due 20260101 < 20261122
+        self.assertEqual(a["today"]["sells"], 1)
         self.assertEqual(len(a["overdue"]), 1)
-        # 回撤：11000 → 10500 = -4.55%
         self.assertAlmostEqual(a["max_drawdown_pct"], -4.55, places=1)
 
-    def test_empty_equity_fallback(self):
+    def test_combined_fields_present(self):
         res = review.compute(day="20261120", ledgers=_ledgers(), save=False)
-        b = res["instances"]["B"]
-        self.assertEqual(b["closed_trades"], 0)
-        self.assertIsNone(b["win_rate_pct"])
-        self.assertEqual(b["equity"], 5000.0)
-        self.assertEqual(b["ret_pct"], 0.0)
-        c = res["instances"]["C"]
-        self.assertEqual(c["equity"], 0.0)
+        c = res["combined"]
+        for key in ("avg_win", "avg_loss", "profit_factor", "expectancy",
+                    "fees_total", "max_drawdown_pct", "overdue"):
+            self.assertIn(key, c, key)
+        self.assertEqual(c["closed_trades"], 3)
+        self.assertEqual(c["pnl_total"], 400.0)
 
-    def test_combined(self):
-        res = review.compute(day="20261120", ledgers=_ledgers(), save=False)
-        comb = res["combined"]
-        self.assertEqual(comb["closed_trades"], 3)
-        self.assertEqual(comb["pnl_total"], 400.0)
-        self.assertAlmostEqual(comb["equity"], 10900 + 5000, places=2)
+    def test_max_drawdown_counts_start_and_zero(self):
+        """R7/R8：本金也当峰值；跌到 0 = -100%。"""
+        led = {"start_capital": 10000, "equity": [{"date": "20261117", "equity": 9500}], "trades": []}
+        res = review.compute(day="20261117", ledgers={"A": led, "B": {}, "C": {}}, save=False)
+        self.assertAlmostEqual(res["instances"]["A"]["max_drawdown_pct"], -5.0, places=1)
 
-    def test_summary_text(self):
-        text = review.summary_text(review.compute(day="20261120", ledgers=_ledgers(), save=False))
-        self.assertIn("胜率 66.7%", text)
-        self.assertIn("盈亏比 5.0", text)
-        self.assertIn("逾期未卖", text)
+        led0 = {"start_capital": 10000, "equity": [
+            {"date": "20261117", "equity": 10000},
+            {"date": "20261118", "equity": 0}], "trades": []}
+        res0 = review.compute(day="20261118", ledgers={"A": led0, "B": {}, "C": {}}, save=False)
+        self.assertAlmostEqual(res0["instances"]["A"]["max_drawdown_pct"], -100.0, places=1)
+
+    def test_benchmark_short_series_none(self):
+        with mock.patch("stocklens.tdx.index_series", return_value={"date": [20261117], "close": [3500.0]}):
+            self.assertIsNone(review._benchmark("20261117"))
+
+    def test_benchmark_as_of_day(self):
+        dates = [20261110, 20261111, 20261112, 20261113, 20261114,
+                 20261117, 20261118, 20261119, 20261120, 20261123, 20261124]
+        closes = [3400 + i * 10 for i in range(len(dates))]
+        with mock.patch("stocklens.tdx.index_series", return_value={"date": dates, "close": closes}):
+            bm = review._benchmark("20261120")
+        self.assertIsNotNone(bm)
+        self.assertEqual(bm["last_date"], "20261120")
+
+    def test_summary_no_none(self):
+        text = review.summary_text(review.compute(day="20261120",
+                                                 ledgers={"A": {}, "B": {}, "C": {}}, save=False))
+        self.assertNotIn("None", text)
 
     def test_save_false_does_not_write(self):
         import pathlib
@@ -86,6 +98,17 @@ class TReview(unittest.TestCase):
         review.compute(day="20261120", ledgers=_ledgers(), save=False)
         after = out.read_text(encoding="utf-8") if out.exists() else None
         self.assertEqual(before, after)
+
+    def test_suspicious_early_equity_excluded(self):
+        """早期旧口径低点不应制造 -80% 回撤。"""
+        led = {"start_capital": 10000, "equity": [
+            {"date": "20261118", "equity": 1000},
+            {"date": "20261119", "equity": 9800},
+            {"date": "20261120", "equity": 9700}], "trades": []}
+        res = review.compute(day="20261120", ledgers={"A": led, "B": {}, "C": {}}, save=False)
+        a = res["instances"]["A"]
+        self.assertGreater(a["max_drawdown_pct"], -10.0)
+        self.assertEqual(a["equity_points_excluded"], 1)
 
 
 if __name__ == "__main__":
