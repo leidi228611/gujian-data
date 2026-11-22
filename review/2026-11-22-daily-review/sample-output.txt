@@ -1,0 +1,145 @@
+=== review._data/review_stats.json（2026-11-22 真实输出，模拟盘数据）===
+{
+ "date": "20261122",
+ "combined": {
+  "closed_trades": 2,
+  "win_rate_pct": 0.0,
+  "pnl_total": -788.43,
+  "equity": 112167.17,
+  "start_capital": 114000.0,
+  "ret_pct": -1.61,
+  "today_pnl": 0,
+  "today_trades": 0
+ },
+ "A": {
+  "closed_trades": 0,
+  "win_rate_pct": null,
+  "expectancy": null,
+  "profit_factor": null,
+  "pnl_total": 0,
+  "fees_total": 15.25,
+  "start_capital": 60000.0,
+  "equity": 58960.75,
+  "ret_pct": -1.73,
+  "max_drawdown_pct": -0.86,
+  "today": {
+   "buys": 0,
+   "sells": 0,
+   "pnl": 0,
+   "turnover": 0
+  },
+  "overdue": []
+ },
+ "B": {
+  "closed_trades": 2,
+  "win_rate_pct": 0.0,
+  "avg_win": null,
+  "avg_loss": -394.21,
+  "profit_factor": 0.0,
+  "expectancy": -394.21,
+  "pnl_total": -788.43,
+  "max_drawdown_pct": -0.56
+ },
+ "benchmark": {
+  "last_date": "20261120",
+  "close": 3533.79,
+  "recent_days": 10,
+  "recent_ret_pct": -3.16
+ }
+}
+
+=== daily_review._data/daily_review.json（2026-11-22）===
+{
+ "date": "20261122",
+ "prev_trading_day": 20261120,
+ "A": {
+  "buys_today": [],
+  "sells_today": 0,
+  "holdings": [
+   {
+    "name": "长园集团",
+    "code": "600525",
+    "shares": 100,
+    "cost": 4.02,
+    "last": 3.77,
+    "pnl_pct": -6.22,
+    "buy_date": "20261118",
+    "sell_due": "20261123",
+    "overdue": false
+   },
+   {
+    "name": "大位科技",
+    "code": "600589",
+    "shares": 1100,
+    "cost": 6.43,
+    "last": 5.56,
+    "pnl_pct": -13.53,
+    "buy_date": "20261118",
+    "sell_due": "20261123",
+    "overdue": false
+   },
+   {
+    "name": "四方股份",
+    "code": "601126",
+    "shares": 700,
+    "cost": 25.26,
+    "last": 25.2,
+    "pnl_pct": -0.24,
+    "buy_date": "20261120",
+    "sell_due": "20261125",
+    "overdue": false
+   }
+  ],
+  "prev_buys": [
+   {
+    "name": "四方股份",
+    "code": "601126",
+    "shares": 700.0,
+    "buy_price": 25.26,
+    "buy_at": "2026-11-20 14:59:38",
+    "close": 25.2,
+    "close_date": 20261120,
+    "close_ret_pct": -0.24,
+    "next_close": null,
+    "next_ret_pct": null,
+    "latest_close": 25.2,
+    "latest_ret_pct": -0.24,
+    "status": "持仓中"
+   }
+  ]
+ },
+ "B": {
+  "buys_today": [],
+  "sells_today": 0,
+  "holdings": [
+   {
+    "name": "长电科技",
+    "code": "600584",
+    "shares": 300,
+    "cost": 50.2,
+    "last": 50.2,
+    "pnl_pct": 0.0,
+    "buy_date": "20261120",
+    "sell_due": "20261124",
+    "overdue": false
+   }
+  ],
+  "prev_buys": [
+   {
+    "name": "长电科技",
+    "code": "600584",
+    "shares": 300.0,
+    "buy_price": 50.2,
+    "buy_at": "2026-11-20 14:59:39",
+    "close": 50.2,
+    "close_date": 20261120,
+    "close_ret_pct": 0.0,
+    "next_close": null,
+    "next_ret_pct": null,
+    "latest_close": 50.2,
+    "latest_ret_pct": 0.0,
+    "status": "持仓中"
+   }
+  ]
+ }
+}
