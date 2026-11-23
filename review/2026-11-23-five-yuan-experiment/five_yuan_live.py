@@ -13,6 +13,7 @@ D 独立账本 `_data/five_yuan_live.json`，不碰 A/B/C 的 sim.json；计划�
 from __future__ import annotations
 
 import json
+import os
 import random
 import sys
 import time
@@ -81,6 +82,18 @@ def _quote(hub, code: str) -> float | None:
         return None
 
 
+def _limits(hub, code: str) -> tuple[float | None, float | None]:
+    """返回 (涨停价, 跌停价)；取不到返回 (None, None)。"""
+    try:
+        from stocklens.datasource import normalize
+        q = hub.quote(normalize(str(code))) or {}
+        up = float(q.get("limit_up") or 0)
+        down = float(q.get("limit_down") or 0)
+        return (up if up > 0 else None, down if down > 0 else None)
+    except Exception:  # noqa: BLE001
+        return (None, None)
+
+
 def _candidates() -> list[str]:
     """≤5 元、近 20 日均额≥1000 万、主板/创业板/科创板均可（排除指数）。"""
     from stocklens import tdx
@@ -101,8 +114,57 @@ def _candidates() -> list[str]:
     return out
 
 
+def _lock_path() -> Path:
+    return STATE.with_suffix(".lock")
+
+
+def _acquire_lock() -> bool:
+    """单实例互斥（文件锁）；并发 tick 直接跳过，避免账本丢更新。"""
+    p = _lock_path()
+    for _ in range(2):
+        try:
+            fd = os.open(str(p), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            try:
+                os.write(fd, str(os.getpid()).encode())
+            finally:
+                os.close(fd)
+            return True
+        except FileExistsError:
+            try:
+                age = time.time() - p.stat().st_mtime
+            except OSError:
+                age = 0
+            if age > 600:                     # 陈旧锁（>10 分钟）自动清理
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
+                continue
+            return False
+        except OSError:
+            return False
+    return False
+
+
+def _release_lock() -> None:
+    try:
+        _lock_path().unlink()
+    except OSError:
+        pass
+
+
 def tick(now: str | None = None, hub=None, candidates=None) -> dict:
-    """执行一次 tick；返回结果（便于测试/日志）。"""
+    """执行一次 tick（带文件锁）；返回结果（便于测试/日志）。"""
+    if not _acquire_lock():
+        return {"ok": True, "actions": [], "skipped": "locked"}
+    try:
+        return _tick_impl(now=now, hub=hub, candidates=candidates)
+    finally:
+        _release_lock()
+
+
+def _tick_impl(now: str | None = None, hub=None, candidates=None) -> dict:
+    """真正执行 tick 的内部实现。"""
     now = now or time.strftime("%H:%M")
     if time.localtime().tm_wday >= 5:      # 周末不交易
         return {"ok": True, "actions": [], "skipped": "weekend"}
@@ -129,9 +191,13 @@ def tick(now: str | None = None, hub=None, candidates=None) -> dict:
     for s in list(d.get("slots") or []):
         if str(s.get("buy_date") or "") == today:
             continue
+        _up, _down = _limits(hub, s.get("code"))
         price = _quote(hub, s.get("code"))
         cost = float(s.get("cost") or 0)
         if price is None or cost <= 0:
+            continue
+        if _down and price <= _down * 0.999:
+            log(f"跌停无法卖出，跳过：{s.get('name')} {price}（跌停 {_down}）")
             continue
         if price >= cost * (1 + TARGET):
             shares = float(s.get("shares") or 0)
@@ -160,8 +226,12 @@ def tick(now: str | None = None, hub=None, candidates=None) -> dict:
         seed = int(time.time()) % 100000
         random.Random(seed).shuffle(cands)
         for code in cands[:30]:
+            _up, _down = _limits(hub, code)
             price = _quote(hub, code)
             if not price or price > MAX_PRICE:
+                continue
+            if _up and price >= _up * 0.999:
+                log(f"涨停无法买入，跳过：{code} {price}（涨停 {_up}）")
                 continue
             # 留出费用空间：预算 20000 不能把现金全花掉（否则 amount+fee 超现金）
             available = float(d.get("cash") or 0) - 20.0

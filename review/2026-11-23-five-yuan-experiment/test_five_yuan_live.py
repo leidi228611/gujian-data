@@ -68,6 +68,29 @@ class TFYLive(unittest.TestCase):
         r = self._tick("14:55", ["600000"])
         self.assertFalse(any("买入" in a for a in r["actions"]))
 
+    def test_limit_up_no_buy(self):
+        """涨停价无法买入，应跳过（BUG-2）。"""
+        self._orig_limits = fy._limits
+        fy._limits = lambda hub, code: (4.0, None)  # 报价 4.0 = 涨停
+        try:
+            r = self._tick("14:55", ["600000"])
+        finally:
+            fy._limits = self._orig_limits
+        self.assertFalse(any("买入" in a for a in r["actions"]))
+        self.assertEqual(fy._load()["slots"], [])
+
+    def test_lock_prevents_concurrent_tick(self):
+        """文件锁存在时，第二次 tick 跳过（BUG-5）。"""
+        lock = fy._lock_path()
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_text("other", encoding="utf-8")
+        try:
+            r = fy.tick(now="14:55", hub=object(), candidates=["600000"])
+        finally:
+            lock.unlink(missing_ok=True)
+        self.assertEqual(r.get("skipped"), "locked")
+        self.assertEqual(fy._load()["slots"], [])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
