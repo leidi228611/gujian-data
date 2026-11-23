@@ -117,11 +117,13 @@ def tick(now: str | None = None, hub=None, candidates=None) -> dict:
         _td = is_trading_day(hub)
         if isinstance(_td, dict) and not _td.get("trading"):
             return {"ok": True, "actions": [], "skipped": "holiday"}
-    except Exception:  # noqa: BLE001
-        pass
-    d = _load()
+    except Exception as exc:  # noqa: BLE001
+        log(f"交易日判断失败，跳过本次 tick（fail-closed）: {type(exc).__name__}")
+        return {"ok": True, "actions": [], "skipped": "trading_day_unknown"}
     today = _today()
     actions = []
+    sold_codes: set[str] = set()
+    d = _load()
 
     # 1) 卖出：T+1 且现价 ≥ 成本×1.05
     for s in list(d.get("slots") or []):
@@ -142,6 +144,7 @@ def tick(now: str | None = None, hub=None, candidates=None) -> dict:
                                 "code": s.get("code"), "name": s.get("name"),
                                 "shares": shares, "price": price, "fee": fee,
                                 "pnl": pnl, "reason": f"涨到+5%（成本{cost}）"})
+            sold_codes.add(str(s.get("code") or ""))
             actions.append(f"卖出 {s.get('name')} {shares:g}股 @{price}（+5%目标）")
             log(actions[-1])
 
@@ -152,7 +155,10 @@ def tick(now: str | None = None, hub=None, candidates=None) -> dict:
     just_sold = bool(actions)
     if can_buy and (BUY_START <= now <= BUY_END or (just_sold and now <= BUY_END)):
         cands = list(candidates) if candidates is not None else _candidates()
-        random.shuffle(cands)
+        # 卖出即换“下一只”：排除本 tick 刚卖出的标的（BUG-1）
+        cands = [c for c in cands if c not in sold_codes]
+        seed = int(time.time()) % 100000
+        random.Random(seed).shuffle(cands)
         for code in cands[:30]:
             price = _quote(hub, code)
             if not price or price > MAX_PRICE:
@@ -179,7 +185,7 @@ def tick(now: str | None = None, hub=None, candidates=None) -> dict:
                                "buy_at": time.strftime("%Y-%m-%d %H:%M:%S")})
             d["trades"].append({"at": time.strftime("%Y-%m-%d %H:%M:%S"), "action": "买入",
                                 "code": code, "name": name, "shares": lot, "price": price,
-                                "fee": fee, "reason": "5元股·涨5%卖出策略"})
+                                "fee": fee, "reason": "5元股·涨5%卖出策略", "seed": seed})
             actions.append(f"买入 {name} {lot}股 @{price}")
             log(actions[-1])
             break
@@ -194,8 +200,9 @@ def tick(now: str | None = None, hub=None, candidates=None) -> dict:
             eq += float(s.get("shares") or 0) * float(s.get("cost") or 0)
         except Exception:  # noqa: BLE001
             pass
-    d.setdefault("equity", []).append({"date": today, "equity": round(eq, 2),
-                                       "note": "five_yuan_live"})
+    if actions:
+        d.setdefault("equity", []).append({"date": today, "equity": round(eq, 2),
+                                           "note": "five_yuan_live"})
     _save(d)
     return {"ok": True, "actions": actions, "cash": d.get("cash"), "slots": d.get("slots")}
 

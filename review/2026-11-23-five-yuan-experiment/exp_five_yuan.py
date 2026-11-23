@@ -181,6 +181,7 @@ def main() -> int:
         print(f"  [{mode}] 平均持股 {report['modes'][mode]['avg_hold_mean']} 天，成交 {pooled['trades']} 笔，期末持仓 {pooled['open']}")
     out = ROOT / "reports" / f"五元股持股实验-{args.end}.md"
     lines = [f"# 5 元以内 +5% 卖出 · 持股天数实验（{args.start}~{args.end}）", "",
+             f"- 随机种子：{args.seeds} 个（报告中的“平均持股”为每 seed 均值再平均；括号内为合并值）",
              f"- 有效股票池：{len(bars)} 只（窗口内有成交，且日成交额 ≥1,000 万）",
              f"- 交易日：{len(cal)} 天；每种子起始资金不建模（只看持股天数/成交）",
              ""]

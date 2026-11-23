@@ -7,6 +7,7 @@ import pathlib
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 from _tools import five_yuan_live as fy
 
@@ -21,11 +22,14 @@ class TFYLive(unittest.TestCase):
                                         "slots": [], "trades": [], "equity": []}),
                             encoding="utf-8")
         self.prices = {"600000": 4.0, "600001": 3.0, "600002": 2.5}
+        self._td_patch = mock.patch("stocklens.trading.is_trading_day", return_value={"trading": True})
+        self._td_patch.start()
         self._orig_quote = fy._quote
         fy._quote = lambda hub, code: self.prices.get(code)
 
     def tearDown(self):
         fy._quote = self._orig_quote
+        self._td_patch.stop()
         self.tmp.cleanup()
 
     def _tick(self, now, cands=None):
@@ -53,10 +57,11 @@ class TFYLive(unittest.TestCase):
         r = self._tick("10:00", ["600000", "600001"])
         acts = "".join(r["actions"])
         self.assertIn("卖出", acts)
-        # 卖出后同一 tick 应立即买下一只
+        # 卖出后同一 tick 应立即买下一只（且不能买回刚卖出的同一只）
         self.assertIn("买入", acts)
         led = fy._load()
         self.assertEqual(len(led["slots"]), 1)
+        self.assertNotEqual(led["slots"][0]["code"], "600000")
 
     def test_price_above_5_not_bought(self):
         self.prices["600000"] = 5.5
