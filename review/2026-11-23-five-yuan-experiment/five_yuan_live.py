@@ -82,14 +82,30 @@ def _quote(hub, code: str) -> float | None:
         return None
 
 
+def _limit_pct(code: str) -> float:
+    """按板块估涨跌停幅度（无涨跌停字段时兜底）。"""
+    c = str(code)
+    if c.startswith(("688", "689", "300", "301")):
+        return 0.20
+    if c.startswith(("8", "4")):
+        return 0.30
+    return 0.10
+
+
 def _limits(hub, code: str) -> tuple[float | None, float | None]:
-    """返回 (涨停价, 跌停价)；取不到返回 (None, None)。"""
+    """返回 (涨停价, 跌停价)；优先行情字段，缺失时用昨收×板幅推导。"""
     try:
         from stocklens.datasource import normalize
         q = hub.quote(normalize(str(code))) or {}
         up = float(q.get("limit_up") or 0)
         down = float(q.get("limit_down") or 0)
-        return (up if up > 0 else None, down if down > 0 else None)
+        if up > 0 and down > 0:
+            return (up, down)
+        prev = float(q.get("prev_close") or 0)
+        if prev > 0:
+            pct = _limit_pct(code)
+            return (round(prev * (1 + pct), 2), round(prev * (1 - pct), 2))
+        return (None, None)
     except Exception:  # noqa: BLE001
         return (None, None)
 
@@ -118,17 +134,18 @@ def _lock_path() -> Path:
     return STATE.with_suffix(".lock")
 
 
-def _acquire_lock() -> bool:
-    """单实例互斥（文件锁）；并发 tick 直接跳过，避免账本丢更新。"""
+def _acquire_lock() -> str | None:
+    """单实例互斥（文件锁）；成功返回 token，失败返回 None。"""
     p = _lock_path()
+    token = f"{os.getpid()}-{time.time_ns()}"
     for _ in range(2):
         try:
             fd = os.open(str(p), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             try:
-                os.write(fd, str(os.getpid()).encode())
+                os.write(fd, token.encode())
             finally:
                 os.close(fd)
-            return True
+            return token
         except FileExistsError:
             try:
                 age = time.time() - p.stat().st_mtime
@@ -140,27 +157,36 @@ def _acquire_lock() -> bool:
                 except OSError:
                     pass
                 continue
-            return False
+            return None
         except OSError:
-            return False
-    return False
+            return None
+    return None
 
 
-def _release_lock() -> None:
+def _release_lock(token: str | None = None) -> None:
+    """释放锁；带 token 时只删自己的锁（避免 ABA 误删新锁）。"""
+    p = _lock_path()
     try:
-        _lock_path().unlink()
+        if token is not None:
+            try:
+                if p.read_text(encoding="utf-8") != token:
+                    return
+            except OSError:
+                return
+        p.unlink()
     except OSError:
         pass
 
 
 def tick(now: str | None = None, hub=None, candidates=None) -> dict:
     """执行一次 tick（带文件锁）；返回结果（便于测试/日志）。"""
-    if not _acquire_lock():
+    token = _acquire_lock()
+    if not token:
         return {"ok": True, "actions": [], "skipped": "locked"}
     try:
         return _tick_impl(now=now, hub=hub, candidates=candidates)
     finally:
-        _release_lock()
+        _release_lock(token)
 
 
 def _tick_impl(now: str | None = None, hub=None, candidates=None) -> dict:
