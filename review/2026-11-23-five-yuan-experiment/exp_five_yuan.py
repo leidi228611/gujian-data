@@ -13,7 +13,10 @@
 T+1：买入当日不能卖出，最早次日。
 
 用法：
-  python -X utf8 -m stocklens.exp_five_yuan --start 20260101 --end 20261123 --seeds 10
+  python -X utf8 -m stocklens.exp_five_yuan --start 20260101 --end 20261123 --seeds 20
+
+注：2026-11-23 交叉验证后默认值由 10 改为 20，与 report-holding-days.md /
+README 声明的口径（20 seeds）对齐；此前按默认 10 seeds 运行会得到不同结果。
 """
 from __future__ import annotations
 
@@ -148,7 +151,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="5元股 +5% 卖出链式持股天数实验")
     ap.add_argument("--start", type=int, default=20260101)
     ap.add_argument("--end", type=int, default=20261123)
-    ap.add_argument("--seeds", type=int, default=10)
+    ap.add_argument("--seeds", type=int, default=20)  # 与 20-seed 报告口径对齐（原 10）
     ap.add_argument("--mode", choices=["high", "close", "both"], default="both")
     ap.add_argument("--force-cache", action="store_true")
     args = ap.parse_args()
