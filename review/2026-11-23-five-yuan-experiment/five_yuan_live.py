@@ -28,6 +28,7 @@ TARGET = 0.05
 MAX_PRICE = 5.0
 BUDGET = 20000.0
 BUY_START, BUY_END = "14:50", "14:57"
+MAX_HOLD_DAYS = 40  # 2026-11-23 回测最优：N=40（盘中触+5%口径）
 
 
 def log(msg: str) -> None:
@@ -72,6 +73,42 @@ def _today() -> str:
     return time.strftime("%Y%m%d")
 
 
+def _max_hold_days() -> int:
+    """读实盘执行口径 max_hold_days；与看板 hold_days 不一致时告警（两者应同步）。"""
+    try:
+        import json as _json
+        cfg = _json.loads((ROOT / "data_d" / "data" / "strategy_config.json").read_text(encoding="utf-8"))
+        exec_days = int(cfg.get("max_hold_days") or MAX_HOLD_DAYS)
+        view_days = cfg.get("hold_days")
+        if view_days not in (None, "") and int(view_days) != exec_days:
+            log(f"配置告警：hold_days={view_days} 与 max_hold_days={exec_days} 不一致，"
+                f"实盘以 max_hold_days={exec_days} 为准，请同步两者")
+        return max(1, exec_days)
+    except Exception:  # noqa: BLE001
+        return MAX_HOLD_DAYS
+
+
+def _held_days(buy_date: str, hub) -> int:
+    """买入日到今天的交易日数（不含买入日，含今天）；取不到日历退回工作日。"""
+    try:
+        from stocklens.trading import trading_days_between
+        r = trading_days_between(str(buy_date), _today(), hub)
+        return int(r.get("days") or 0)
+    except Exception:  # noqa: BLE001
+        from datetime import date, timedelta
+        try:
+            d1 = date(int(str(buy_date)[:4]), int(str(buy_date)[4:6]), int(str(buy_date)[6:8]))
+            d2 = date.today()
+            n = 0; cur = d1
+            while cur < d2:
+                cur += timedelta(days=1)
+                if cur.weekday() < 5:
+                    n += 1
+            return n
+        except Exception:  # noqa: BLE001
+            return 0
+
+
 def _quote(hub, code: str) -> float | None:
     from stocklens.datasource import normalize
     try:
@@ -110,13 +147,27 @@ def _limits(hub, code: str) -> tuple[float | None, float | None]:
         return (None, None)
 
 
+def _tradeable_meta(meta) -> bool:
+    """排除退市/长期停牌（universe 里的 delisted 标记）。"""
+    if not isinstance(meta, dict):
+        return False
+    if meta.get("delisted"):
+        return False
+    try:
+        return int(meta.get("last") or 0) >= 20260101
+    except (TypeError, ValueError):
+        return False
+
+
 def _candidates() -> list[str]:
-    """≤5 元、近 20 日均额≥1000 万、主板/创业板/科创板均可（排除指数）。"""
+    """≤5 元、近 20 日均额≥1000 万、非退市（主板/创业板/科创板均可）。"""
     from stocklens import tdx
     import numpy as np
     out = []
     u = tdx.universe()
-    for code in u.get("stocks") or {}:
+    for code, meta in (u.get("stocks") or {}).items():
+        if not _tradeable_meta(meta):
+            continue
         try:
             a = tdx.read_stock(code)
             if len(a["close"]) < 21:
@@ -225,7 +276,11 @@ def _tick_impl(now: str | None = None, hub=None, candidates=None) -> dict:
         if _down and price <= _down * 0.999:
             log(f"跌停无法卖出，跳过：{s.get('name')} {price}（跌停 {_down}）")
             continue
-        if price >= cost * (1 + TARGET):
+        held = _held_days(str(s.get("buy_date") or ""), hub)
+        max_hold = _max_hold_days()
+        # 时间止损只在尾盘（14:50 后）执行，避免盘中提前砍仓
+        time_stop = held >= max_hold and now >= "14:50"
+        if price >= cost * (1 + TARGET) or time_stop:
             shares = float(s.get("shares") or 0)
             amount = round(price * shares, 2)
             fee = _fee_sell(amount)
@@ -235,9 +290,12 @@ def _tick_impl(now: str | None = None, hub=None, candidates=None) -> dict:
             d["trades"].append({"at": time.strftime("%Y-%m-%d %H:%M:%S"), "action": "卖出",
                                 "code": s.get("code"), "name": s.get("name"),
                                 "shares": shares, "price": price, "fee": fee,
-                                "pnl": pnl, "reason": f"涨到+5%（成本{cost}）"})
+                                "pnl": pnl, "reason": (f"涨到+5%（成本{cost}）" if price >= cost * (1 + TARGET)
+                                                        else f"持有满{max_hold}个交易日时间止损")})
             sold_codes.add(str(s.get("code") or ""))
-            actions.append(f"卖出 {s.get('name')} {shares:g}股 @{price}（+5%目标）")
+            reason = ("涨到+5%" if price >= cost * (1 + TARGET)
+                      else f"持有满{max_hold}个交易日时间止损")
+            actions.append(f"卖出 {s.get('name')} {shares:g}股 @{price}（{reason}）")
             log(actions[-1])
 
     # 2) 买入：空仓 + 无当日买入；14:52-14:57 或刚卖出后（允许当日补买）
@@ -276,6 +334,9 @@ def _tick_impl(now: str | None = None, hub=None, candidates=None) -> dict:
                 name = (q or {}).get("name") or ""
             except Exception:  # noqa: BLE001
                 pass
+            if "退" in name or "ST" in name.upper():
+                log(f"排除退市/ST：{code} {name}")
+                continue
             d["slots"].append({"code": code, "name": name, "shares": lot, "cost": price,
                                "fee": fee, "buy_date": today,
                                "buy_at": time.strftime("%Y-%m-%d %H:%M:%S")})
